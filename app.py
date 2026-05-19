@@ -20,10 +20,11 @@ from PIL import Image as PILImage
 
 APP_TITLE = "Trebeschi Comercial"
 BASE_DIR = Path(__file__).resolve().parent
-EXCEL_PATH = Path(
-    r"C:\Users\rafael.germano\Documents\Rafael Germano\Codex\2026-05-19\app disponiblidade\disponibilidade.xlsx"
-)
+
+EXCEL_PATH = BASE_DIR / "disponibilidade.xlsx"
+
 LOGO_PATH = BASE_DIR / "assets" / "trebeschi_logo.png"
+
 AUTO_REFRESH_SECONDS = 120
 BRASILIA_TZ = pytz.timezone("America/Sao_Paulo")
 
