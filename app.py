@@ -1005,20 +1005,6 @@ class TrebeschiCommercialApp:
                 'alt="Trebeschi">'
             )
 
-        st.markdown(
-            f"""
-            <div class="quote-hero">
-                {logo_html}
-                <div class="quote-title">Cotação Trebeschi 🍅 🧄 🧅 🍠</div>
-                <div class="quote-subtitle">
-                    Selecione as culturas e insira os dados para gerar a cotação.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        st.divider()
-
     def render_quote_simulator(self) -> None:
         st.markdown(
             '<div class="quote-section-title">🧺 Selecione as culturas para cotação:</div>',
