@@ -297,12 +297,7 @@ class PageStyle:
                 .stApp {
                     background: var(--bg) !important;
                     color: var(--text) !important;
-                }
-                .stApp {
-                    background: var(--bg) !important;
-                    color: var(--text) !important;
-                    color-scheme: dark;
-                }               
+                }             
                 .block-container {
                     max-width: 1040px;
                     padding-top: 2.4rem;
@@ -370,83 +365,85 @@ class PageStyle:
 
                     border-radius: 8px !important;
                 }
+                input,
+                textarea,
+                select {
+                    font-size: 16px !important;
+                }
                 /* =========================================
-                   DROPDOWN OPTIONS - DARK MODE FIX
-                ========================================= */
-                
-                div[role="listbox"] {
-                    background: var(--surface) !important;
-                    border: 1px solid var(--border) !important;
-                    border-radius: 8px !important;
-                }
-                
-                div[role="option"] {
-                    background: var(--surface) !important;
-                    color: var(--text) !important;
-                }
-                
-                /* Hover da opção */
-                
-                div[role="option"]:hover {
-                    background: var(--surface-soft) !important;
-                    color: var(--text) !important;
-                }
-                
-                /* Opção selecionada */
-                
-                div[aria-selected="true"] {
-                    background: var(--green) !important;
-                    color: #ffffff !important;
-                }
-                
-                /* Texto interno das opções */
-                
-                div[role="option"] * {
-                    color: inherit !important;
-                }
-                
-                /* Corrige texto do select fechado */
-                
-                div[data-baseweb="select"] span {
-                    color: var(--input-text) !important;
-                }
-                
-                /* Corrige ícone/seta */
-                
-                div[data-baseweb="select"] svg {
+                   SELECTBOX / DROPDOWN - DARK MODE REAL FIX
+                    ========================================= */
+                    
+                    /* Caixa principal fechada */
+                    
+                    div[data-baseweb="select"] > div {
+                        background: var(--input-bg) !important;
+                        color: var(--input-text) !important;
+                        border: 1px solid var(--input-border) !important;
+                    }
+                    
+                    /* Texto dentro do select */
+                    
+                    div[data-baseweb="select"] span {
+                        color: var(--input-text) !important;
+                    }
+                    
+                    /* Ícone da seta */
+                    
+                    div[data-baseweb="select"] svg {
                     fill: var(--input-text) !important;
-                }
-
-                .stTextInput input::placeholder,
-                .stNumberInput input::placeholder,
-                textarea::placeholder {
-
-                    color: #9aa7b5 !important;
-                    opacity: 1 !important;
-                }
-
-                /* SELECTBOX */
-
-                div[data-baseweb="select"] > div {
-
-                    background: var(--input-bg) !important;
-
                     color: var(--input-text) !important;
-
-                    border: 1px solid var(--input-border) !important;
                 }
+                    
+                    /* Popup inteiro do dropdown */
+                    
+                    div[data-baseweb="popover"] {
+                        background-color: var(--surface) !important;
+                    }
+                    div[data-baseweb="menu"] {
+                        background: var(--surface) !important;
+                        color: var(--text) !important;
+                    }
 
-                div[data-baseweb="popover"] {
-
-                    background: var(--surface) !important;
-                    color: var(--text) !important;
-                }
-
-                /* RADIO */
-
-                .stRadio label {
-                    color: var(--text) !important;
-                }
+                    /* Container da lista */
+                    
+                    ul[role="listbox"] {
+                        background: var(--surface) !important;
+                        border: 1px solid var(--border) !important;
+                        border-radius: 10px !important;
+                        padding: 4px !important;
+                    }
+                    
+                    /* Cada opção */
+                    
+                    li[role="option"] {
+                        background: var(--surface) !important;
+                        color: var(--text) !important;
+                        border-radius: 8px !important;
+                    }
+                    
+                    /* Texto da opção */
+                    
+                    li[role="option"] * {
+                        color: var(--text) !important;
+                    }
+                    
+                    /* Hover */
+                    
+                    li[role="option"]:hover {
+                        background: var(--surface-soft) !important;
+                        color: var(--text) !important;
+                    }
+                    
+                    /* Selecionado */
+                    
+                    li[aria-selected="true"] {
+                        background: var(--green) !important;
+                    }
+                    
+                    li[aria-selected="true"] * {
+                        color: white !important;
+                    }
 
                 /* =========================================
               CHECKBOX - DARK MODE FIX REAL
@@ -504,6 +501,8 @@ class PageStyle:
                     stroke: white !important;
                 
                     stroke-width: 3 !important;
+                    
+                    color: white !important;
                 
                     width: 16px !important;
                 
