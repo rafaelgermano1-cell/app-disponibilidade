@@ -213,55 +213,118 @@ class ExcelAvailabilityRepository:
 # ============================================================================
 
 class PageStyle:
-    """Aplica CSS unico para as duas funcionalidades, com suporte a modo escuro."""
+    """Aplica CSS unico para as duas funcionalidades, com suporte real a dark mode."""
 
     @staticmethod
     def apply() -> None:
-        st.set_page_config(page_title=APP_TITLE, page_icon="📦", layout="centered")
+        st.set_page_config(
+            page_title=APP_TITLE,
+            page_icon="📦",
+            layout="centered",
+        )
+        st.markdown(
+            """
+            <meta name="theme-color" content="#176b55">
+            """,
+            unsafe_allow_html=True,
+        )
+
         st.markdown(
             """
             <style>
+
                 :root {
-                    --bg: #f6f8fb;
+                    color-scheme: light dark;
+
+                    --bg: #f5f7fa;
                     --surface: #ffffff;
-                    --surface-soft: #edf5e8;
-                    --text: #1f2937;
-                    --muted: #526070;
-                    --border: #d7dde5;
-                    --green: #1f6f5b;
-                    --green-bright: #00843d;
-                    --blue: #2e75b6;
+                    --surface-soft: #eef4ef;
+
+                    --text: #17212b;
+                    --text-soft: #4b5563;
+
+                    --border: #d7dee7;
+
+                    --green: #176b55;
+                    --green-bright: #00a651;
+
+                    --blue: #2f75b5;
                     --danger: #d32f2f;
+
+                    --input-bg: #ffffff;
+                    --input-text: #17212b;
+                    --input-border: #cfd8e3;
+
+                    --table-header: #176b55;
                 }
+
                 @media (prefers-color-scheme: dark) {
+
                     :root {
-                        --bg: #101614;
-                        --surface: #17211e;
-                        --surface-soft: #203029;
-                        --text: #eef5f1;
-                        --muted: #b8c6bf;
-                        --border: #31433c;
-                        --green: #29966f;
-                        --green-bright: #47c784;
-                        --blue: #3a86c8;
-                        --danger: #ff7a70;
+
+                        --bg: #0f1419;
+
+                        --surface: #182028;
+
+                        --surface-soft: #212b34;
+
+                        --text: #f3f7fb;
+
+                        --text-soft: #c5d0db;
+
+                        --border: #344250;
+
+                        --green: #1f8a67;
+
+                        --green-bright: #37d487;
+
+                        --blue: #4593d6;
+
+                        --danger: #ff7b72;
+
+                        --input-bg: #111827;
+
+                        --input-text: #f3f7fb;
+
+                        --input-border: #3b4a5a;
+
+                        --table-header: #1f8a67;
                     }
                 }
+
+                html,
+                body,
                 .stApp {
-                    background: var(--bg);
-                    color: var(--text);
+                    background: var(--bg) !important;
+                    color: var(--text) !important;
                 }
+
                 .block-container {
                     max-width: 1040px;
                     padding-top: 2.4rem;
                     padding-bottom: 3rem;
                 }
-                div[data-testid="stMetric"] {
-                    border: 1px solid var(--border);
-                    border-radius: 8px;
-                    padding: 0.7rem 0.85rem;
-                    background: var(--surface);
+
+                /* =========================================
+                   TEXTOS
+                ========================================= */
+
+                h1, h2, h3, h4, h5, h6,
+                p, span, div, label,
+                .stMarkdown,
+                .stText,
+                .stCaption {
+                    color: var(--text) !important;
                 }
+
+                small {
+                    color: var(--text-soft) !important;
+                }
+
+                /* =========================================
+                   HEADER
+                ========================================= */
+
                 .app-header {
                     display: flex;
                     align-items: center;
@@ -271,6 +334,7 @@ class PageStyle:
                     margin-bottom: 0.8rem;
                     text-align: center;
                 }
+
                 .app-logo {
                     width: 124px;
                     max-width: 32vw;
@@ -278,136 +342,318 @@ class PageStyle:
                     object-fit: contain;
                     display: block;
                 }
+
                 .app-title {
                     font-size: 2rem;
                     line-height: 1.1;
                     font-weight: 800;
-                    color: var(--green-bright);
+                    color: var(--green-bright) !important;
                 }
-                .feature-title {
-                    margin-top: 0.35rem;
-                    margin-bottom: 0.35rem;
-                    color: var(--text);
+
+                /* =========================================
+                   INPUTS STREAMLIT
+                ========================================= */
+
+                .stTextInput input,
+                .stNumberInput input,
+                .stSelectbox div[data-baseweb="select"],
+                .stTextArea textarea {
+
+                    background: var(--input-bg) !important;
+                    color: var(--input-text) !important;
+
+                    border: 1px solid var(--input-border) !important;
+
+                    border-radius: 8px !important;
                 }
-                .culture-title {
-                    margin-top: 1.4rem;
-                    margin-bottom: 0.45rem;
-                    font-size: 1.2rem;
-                    font-weight: 800;
-                    color: var(--text);
+
+                .stTextInput input::placeholder,
+                .stNumberInput input::placeholder,
+                textarea::placeholder {
+
+                    color: #9aa7b5 !important;
+                    opacity: 1 !important;
                 }
-                .availability-table {
-                    width: 100%;
-                    border-collapse: collapse;
-                    font-size: 0.92rem;
-                    margin-bottom: 1rem;
-                    background: var(--surface);
+
+                /* SELECTBOX */
+
+                div[data-baseweb="select"] > div {
+
+                    background: var(--input-bg) !important;
+
+                    color: var(--input-text) !important;
+
+                    border: 1px solid var(--input-border) !important;
+                }
+
+                div[data-baseweb="popover"] {
+
+                    background: var(--surface) !important;
+                    color: var(--text) !important;
+                }
+
+                /* RADIO */
+
+                .stRadio label {
+                    color: var(--text) !important;
+                }
+
+                /* CHECKBOX */
+
+                .stCheckbox label {
+                    color: var(--text) !important;
+                }
+
+                /* =========================================
+                   BOTÕES
+                ========================================= */
+
+                .stButton button,
+                .stDownloadButton button,
+                .stFormSubmitButton button {
+
+                    background: var(--green) !important;
+
+                    color: white !important;
+
+                    border: none !important;
+
+                    border-radius: 8px !important;
+
+                    font-weight: 700 !important;
+                }
+
+                .stButton button:hover,
+                .stDownloadButton button:hover,
+                .stFormSubmitButton button:hover {
+
+                    filter: brightness(1.08);
+                }
+
+                /* =========================================
+                   MÉTRICAS
+                ========================================= */
+
+                div[data-testid="stMetric"] {
+
                     border: 1px solid var(--border);
+
+                    border-radius: 10px;
+
+                    padding: 0.8rem;
+
+                    background: var(--surface);
+                }
+
+                div[data-testid="stMetricLabel"] {
+
+                    color: var(--text-soft) !important;
+                }
+
+                div[data-testid="stMetricValue"] {
+
+                    color: var(--text) !important;
+
+                    font-weight: 800;
+                }
+
+                /* =========================================
+                   TABELAS
+                ========================================= */
+
+                .availability-table {
+
+                    width: 100%;
+
+                    border-collapse: collapse;
+
+                    font-size: 0.92rem;
+
+                    margin-bottom: 1rem;
+
+                    background: var(--surface);
+
+                    border: 1px solid var(--border);
+
                     border-radius: 8px;
+
                     overflow: hidden;
                 }
+
                 .availability-table th {
-                    background: var(--green);
-                    color: #ffffff;
+
+                    background: var(--table-header);
+
+                    color: white;
+
                     font-weight: 800;
+
                     text-align: center;
+
                     padding: 0.45rem 0.5rem;
+
                     border: 1px solid var(--border);
                 }
+
                 .availability-table td {
+
                     color: var(--text);
+
                     text-align: center;
+
                     padding: 0.42rem 0.5rem;
+
                     border: 1px solid var(--border);
                 }
+
                 .availability-table tbody tr:nth-child(odd) td {
+
                     background: var(--surface-soft);
                 }
+
                 .availability-table tbody tr.total-row td {
+
                     background: var(--blue);
-                    color: #ffffff;
+
+                    color: white;
+
                     font-weight: 800;
                 }
-                .table-subtitle {
-                    text-align: center;
-                    font-weight: 800;
-                    color: var(--text);
-                    margin: 0.25rem 0 0.4rem;
-                }
-                .quote-hero {
-                    text-align: center;
-                    padding: 0.7rem 0 1.2rem;
-                }
-                .quote-logo {
-                    width: 150px;
-                    max-width: 42vw;
-                    height: auto;
-                    object-fit: contain;
-                    display: block;
-                    margin: 0 auto 1rem;
-                }
-                .quote-title {
-                    color: var(--green-bright);
-                    font-size: 2.35rem;
-                    line-height: 1.15;
-                    font-weight: 800;
-                    margin: 0.35rem 0 0.7rem;
-                }
-                .quote-subtitle {
-                    color: var(--text);
-                    font-size: 1rem;
-                    text-align: center;
-                }
-                .quote-section-title {
-                    color: var(--green-bright);
-                    font-size: 1.35rem;
-                    font-weight: 800;
-                    margin: 1.25rem 0 0.6rem;
-                }
+
+                /* =========================================
+                   CARDS DE COTAÇÃO
+                ========================================= */
+
                 .quote-result {
+
                     text-align: center;
-                    padding: 0.8rem;
+
+                    padding: 0.9rem;
+
                     margin-top: 1rem;
+
                     border: 1px solid var(--border);
-                    border-radius: 8px;
+
+                    border-radius: 10px;
+
                     background: var(--surface);
                 }
+
                 .quote-price {
+
                     color: var(--danger);
+
                     font-size: 1.7rem;
+
                     font-weight: 800;
+
                     margin: 0.35rem 0;
                 }
+
+                .quote-title,
+                .quote-section-title {
+
+                    color: var(--green-bright) !important;
+                }
+
+                /* =========================================
+                   ALERTAS
+                ========================================= */
+
+                .stAlert {
+                    border-radius: 10px !important;
+                }
+
+                /* =========================================
+                   FOOTER
+                ========================================= */
+
                 .app-footer {
+
                     margin-top: 2rem;
+
                     padding-top: 0.85rem;
+
                     border-top: 1px solid var(--border);
-                    color: var(--muted);
+
+                    color: var(--text-soft);
+
                     text-align: center;
+
                     font-size: 0.85rem;
                 }
+
+                /* =========================================
+                   FOCUS IOS/ANDROID
+                ========================================= */
+
+                input:focus,
+                textarea:focus,
+                select:focus {
+
+                    outline: none !important;
+
+                    border: 1px solid var(--green-bright) !important;
+
+                    box-shadow: 0 0 0 1px var(--green-bright) !important;
+                }
+
+                /* =========================================
+                   AUTOFILL ANDROID
+                ========================================= */
+
+                input:-webkit-autofill,
+                input:-webkit-autofill:hover,
+                input:-webkit-autofill:focus {
+
+                    -webkit-text-fill-color: var(--input-text);
+
+                    -webkit-box-shadow:
+                        0 0 0px 1000px var(--input-bg) inset;
+
+                    transition: background-color 9999s ease-in-out 0s;
+                }
+
+                /* =========================================
+                   MOBILE
+                ========================================= */
+
                 @media (max-width: 700px) {
+
                     .app-header {
                         flex-direction: column;
                         gap: 0.6rem;
                     }
+
                     .app-logo {
                         width: 96px;
                     }
+
                     .app-title {
                         font-size: 1.65rem;
                     }
+
                     .quote-title {
                         font-size: 1.8rem;
                     }
+
                     .availability-table {
-                        font-size: 0.82rem;
+                        font-size: 0.8rem;
                     }
+
                     .availability-table th,
                     .availability-table td {
-                        padding: 0.35rem 0.35rem;
+                        padding: 0.34rem;
+                    }
+
+                    .stButton button,
+                    .stDownloadButton button,
+                    .stFormSubmitButton button {
+
+                        width: 100%;
                     }
                 }
+
             </style>
             """,
             unsafe_allow_html=True,
