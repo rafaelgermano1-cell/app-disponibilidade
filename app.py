@@ -298,7 +298,11 @@ class PageStyle:
                     background: var(--bg) !important;
                     color: var(--text) !important;
                 }
-
+                .stApp {
+                    background: var(--bg) !important;
+                    color: var(--text) !important;
+                    color-scheme: dark;
+                }               
                 .block-container {
                     max-width: 1040px;
                     padding-top: 2.4rem;
@@ -444,10 +448,81 @@ class PageStyle:
                     color: var(--text) !important;
                 }
 
-                /* CHECKBOX */
+                /* =========================================
+              CHECKBOX - DARK MODE FIX REAL
+                ========================================= */
 
-                .stCheckbox label {
+                /* Texto */
+                
+                .stCheckbox label,
+                .stCheckbox span {
                     color: var(--text) !important;
+                    font-weight: 600;
+                }
+                
+                /* Caixa externa */
+                
+                .stCheckbox div[role="checkbox"] {
+                
+                    background-color: var(--input-bg) !important;
+                
+                    border: 2px solid var(--input-border) !important;
+                
+                    border-radius: 6px !important;
+                
+                    width: 20px !important;
+                
+                    height: 20px !important;
+                
+                    transition: all 0.15s ease;
+                }
+                
+                /* Hover */
+                
+                .stCheckbox div[role="checkbox"]:hover {
+                
+                    border-color: var(--green-bright) !important;
+                
+                    box-shadow: 0 0 0 1px var(--green-bright) !important;
+                }
+                
+                /* Marcado */
+                
+                .stCheckbox div[role="checkbox"][aria-checked="true"] {
+                
+                    background-color: var(--green) !important;
+                
+                    border-color: var(--green) !important;
+                }
+                
+                /* Ícone do check */
+                
+                .stCheckbox div[role="checkbox"] svg {
+                
+                    fill: white !important;
+                
+                    stroke: white !important;
+                
+                    stroke-width: 3 !important;
+                
+                    width: 16px !important;
+                
+                    height: 16px !important;
+                }
+                
+                /* Remove fundo estranho do BaseWeb */
+                
+                .stCheckbox div[data-testid="stMarkdownContainer"] {
+                
+                    color: var(--text) !important;
+                }
+                
+                /* Espaçamento melhor */
+                
+                .stCheckbox {
+                
+                    padding-top: 0.2rem;
+                    padding-bottom: 0.2rem;
                 }
 
                 /* =========================================
