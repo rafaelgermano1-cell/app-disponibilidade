@@ -366,6 +366,52 @@ class PageStyle:
 
                     border-radius: 8px !important;
                 }
+                /* =========================================
+                   DROPDOWN OPTIONS - DARK MODE FIX
+                ========================================= */
+                
+                div[role="listbox"] {
+                    background: var(--surface) !important;
+                    border: 1px solid var(--border) !important;
+                    border-radius: 8px !important;
+                }
+                
+                div[role="option"] {
+                    background: var(--surface) !important;
+                    color: var(--text) !important;
+                }
+                
+                /* Hover da opção */
+                
+                div[role="option"]:hover {
+                    background: var(--surface-soft) !important;
+                    color: var(--text) !important;
+                }
+                
+                /* Opção selecionada */
+                
+                div[aria-selected="true"] {
+                    background: var(--green) !important;
+                    color: #ffffff !important;
+                }
+                
+                /* Texto interno das opções */
+                
+                div[role="option"] * {
+                    color: inherit !important;
+                }
+                
+                /* Corrige texto do select fechado */
+                
+                div[data-baseweb="select"] span {
+                    color: var(--input-text) !important;
+                }
+                
+                /* Corrige ícone/seta */
+                
+                div[data-baseweb="select"] svg {
+                    fill: var(--input-text) !important;
+                }
 
                 .stTextInput input::placeholder,
                 .stNumberInput input::placeholder,
