@@ -25,7 +25,7 @@ EXCEL_PATH = BASE_DIR / "disponibilidade.xlsx"
 
 LOGO_PATH = BASE_DIR / "assets" / "trebeschi_logo.png"
 
-AUTO_REFRESH_SECONDS = 120
+AUTO_REFRESH_SECONDS = 600
 BRASILIA_TZ = pytz.timezone("America/Sao_Paulo")
 
 CULTURE_ICONS = {
@@ -873,7 +873,7 @@ class TrebeschiCommercialApp:
         modified_at = datetime.fromtimestamp(EXCEL_PATH.stat().st_mtime)
         st.caption(
             f"Ultima atualizacao da planilha: {modified_at.strftime('%d/%m/%Y %H:%M:%S')} "
-            "| Atualizacao automatica a cada 2 minutos"
+            "| Atualizacao automatica a cada 10 minutos"
         )
         st.caption(f"Arquivo lido: {EXCEL_PATH}")
 
