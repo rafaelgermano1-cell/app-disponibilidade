@@ -218,7 +218,7 @@ class PageStyle:
     @staticmethod
     def apply() -> None:
         st.set_page_config(
-            page_title=APP_TITgitLE,
+            page_title=APP_TITLE,
             page_icon="📦",
             layout="centered",
         )
