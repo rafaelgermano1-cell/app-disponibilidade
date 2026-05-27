@@ -27,6 +27,8 @@ LOGO_PATH = BASE_DIR / "assets" / "trebeschi_logo.png"
 
 AUTO_REFRESH_SECONDS = 600
 BRASILIA_TZ = pytz.timezone("America/Sao_Paulo")
+QUALITY_STANDARDS = ("Padrão A", "Padrão B")
+PRICE_SHEET_NAME = "Precos"
 
 CULTURE_ICONS = {
     "Tomate": "🍅",
@@ -137,15 +139,52 @@ class ExcelAvailabilityRepository:
 
         try:
             items = []
+            prices = self._read_prices(workbook)
             for sheet_name in workbook.sheetnames:
                 culture_name = EXCEL_SHEET_ALIASES.get(sheet_name, sheet_name)
                 if culture_name in self.culture_names:
-                    items.extend(self._read_culture_sheet(workbook[sheet_name], culture_name))
+                    items.extend(
+                        self._read_culture_sheet(
+                            workbook[sheet_name],
+                            culture_name,
+                            prices,
+                        )
+                    )
             return items
         finally:
             workbook.close()
 
-    def _read_culture_sheet(self, sheet, culture: str) -> list[dict]:
+    def _read_prices(self, workbook) -> dict[tuple[str, str, str, str], float]:
+        if PRICE_SHEET_NAME not in workbook.sheetnames:
+            return {}
+
+        sheet = workbook[PRICE_SHEET_NAME]
+        prices = {}
+        rows = list(sheet.iter_rows(values_only=True))
+        if not rows:
+            return prices
+
+        headers = [normalize_text(value) for value in rows[0]]
+        try:
+            culture_col = headers.index("cultura")
+            packing_col = headers.index("packing")
+            product_col = headers.index("produto")
+            price_col = headers.index("preco")
+        except ValueError:
+            return prices
+        quality_col = headers.index("qualidade") if "qualidade" in headers else None
+
+        for row in rows[1:]:
+            culture = EXCEL_SHEET_ALIASES.get(cell_from_row(row, culture_col), cell_from_row(row, culture_col))
+            packing = cell_from_row(row, packing_col)
+            product = cell_from_row(row, product_col)
+            quality = cell_from_row(row, quality_col) if quality_col is not None else ""
+            price = parse_number(cell_from_row(row, price_col))
+            if culture and packing and product and price > 0:
+                prices[price_key(culture, packing, product, quality)] = price
+        return prices
+
+    def _read_culture_sheet(self, sheet, culture: str, prices: dict[tuple[str, str, str, str], float]) -> list[dict]:
         matrix = [list(row) for row in sheet.iter_rows(values_only=True)]
         items = []
         next_id = 1
@@ -158,6 +197,7 @@ class ExcelAvailabilityRepository:
                 block_items = self._read_block(
                     matrix=matrix,
                     culture=culture,
+                    prices=prices,
                     start_row=row_index,
                     start_col=col_index,
                     first_id=next_id,
@@ -171,6 +211,7 @@ class ExcelAvailabilityRepository:
         self,
         matrix: list[list],
         culture: str,
+        prices: dict[tuple[str, str, str, str], float],
         start_row: int,
         start_col: int,
         first_id: int,
@@ -184,12 +225,32 @@ class ExcelAvailabilityRepository:
 
         items = []
         row_index = start_row + 4
+        product_order = 0
+        current_product = ""
+        current_product_order = -1
         while row_index < len(matrix):
-            product = cell_text(matrix, row_index, start_col)
-            if not product or normalize_text(product) == "total":
+            row_label = cell_text(matrix, row_index, start_col)
+            if not row_label or normalize_text(row_label) == "total":
                 break
 
+            quality = quality_label(row_label)
+            if quality and current_product:
+                product = current_product
+                order = current_product_order
+                quality_order = QUALITY_STANDARDS.index(quality)
+            else:
+                product = row_label
+                quality = ""
+                order = product_order
+                quality_order = -1
+                current_product = product
+                current_product_order = order
+                product_order += 1
+
             quantity = parse_number(cell_value(matrix, row_index, start_col + 1))
+            price = prices.get(price_key(culture, packing, product, quality), 0)
+            if not price and not quality:
+                price = prices.get(price_key(culture, packing, product, ""), 0)
             items.append(
                 {
                     "id": first_id + len(items),
@@ -197,14 +258,18 @@ class ExcelAvailabilityRepository:
                     "cultura": culture,
                     "packing": packing,
                     "produto": product,
+                    "qualidade": quality,
                     "ordem_packing": start_row * 1000 + start_col,
-                    "ordem_produto": row_index - (start_row + 4),
+                    "ordem_produto": order,
+                    "ordem_qualidade": quality_order,
                     "quantidade": quantity,
+                    "preco": price,
                     "atualizado_em": updated_at,
                 }
             )
             row_index += 1
 
+        fill_parent_quantities(items)
         return items
 
 
@@ -629,6 +694,38 @@ class PageStyle:
                 .availability-table tbody tr:nth-child(odd) td {
 
                     background: var(--surface-soft);
+                }
+
+                .availability-table tbody tr.product-row td {
+
+                    font-weight: 800;
+
+                    font-size: 0.95rem;
+                }
+
+                .availability-table tbody tr.product-row td:first-child {
+
+                    text-align: left;
+
+                    padding-left: 0.8rem;
+                }
+
+                .availability-table tbody tr.quality-row td:first-child {
+
+                    padding-left: 1.7rem;
+
+                    text-align: left;
+
+                    color: var(--muted);
+                }
+
+                .availability-table tbody tr.quality-row td {
+
+                    font-size: 0.82rem;
+
+                    font-weight: 500;
+
+                    color: var(--muted);
                 }
 
                 .availability-table tbody tr.total-row td {
@@ -1328,37 +1425,132 @@ def generate_quote_pdf(quotes: list[dict], logo_path: Path, validity: datetime) 
 def build_availability_rows(items: list[dict], products: list[str], columns: list[str]) -> list[dict]:
     rows = []
     for product in products:
-        row = {"Produto": product}
+        row = {"Produto": product, "_row_type": "product", "_prices": {}}
         row_total = 0
         for column in columns:
-            quantity = sum(
-                item["quantidade"]
-                for item in items
-                if item["produto"] == product
-                and quantity_column_name(item, items) == column
-            )
+            quantity = product_quantity(items, product, column)
             row[column] = quantity
+            row["_prices"][column] = cell_price(items, product, column)
             row_total += quantity
         if row_total > 0:
             row["Total"] = row_total
+            row["_prices"]["Total"] = unique_price_for_product(items, product)
             rows.append(row)
 
-    total_row = {"Produto": "TOTAL"}
+            for quality in unique_quality_labels(items, product):
+                quality_row = {
+                    "Produto": short_quality_label(quality),
+                    "_row_type": "quality",
+                    "_prices": {},
+                }
+                quality_total = 0
+                for column in columns:
+                    quantity = sum(
+                        item["quantidade"]
+                        for item in items
+                        if item["produto"] == product
+                        and item.get("qualidade") == quality
+                        and quantity_column_name(item, items) == column
+                    )
+                    quality_row[column] = quantity
+                    quality_row["_prices"][column] = cell_price(items, product, column, quality)
+                    quality_total += quantity
+                if quality_total > 0:
+                    quality_row["Total"] = quality_total
+                    quality_row["_prices"]["Total"] = unique_price_for_product(items, product, quality)
+                    rows.append(quality_row)
+
+    total_row = {"Produto": "TOTAL", "_row_type": "total"}
     for column in columns:
-        total_row[column] = sum(
-            item["quantidade"]
-            for item in items
-            if quantity_column_name(item, items) == column
-        )
-    total_row["Total"] = sum_quantities(items)
+        total_row[column] = sum(product_quantity(items, product, column) for product in products)
+    total_row["Total"] = sum(total_row[column] for column in columns)
     rows.append(total_row)
     return rows
+
+
+def product_quantity(items: list[dict], product: str, column: str) -> float:
+    parent_quantity = sum(
+        item["quantidade"]
+        for item in items
+        if item["produto"] == product
+        and not item.get("qualidade")
+        and quantity_column_name(item, items) == column
+    )
+    if parent_quantity:
+        return parent_quantity
+
+    return sum(
+        item["quantidade"]
+        for item in items
+        if item["produto"] == product
+        and item.get("qualidade")
+        and quantity_column_name(item, items) == column
+    )
+
+
+def cell_price(items: list[dict], product: str, column: str, quality: str = "") -> float:
+    prices = {
+        item.get("preco", 0)
+        for item in items
+        if item["produto"] == product
+        and item.get("qualidade", "") == quality
+        and quantity_column_name(item, items) == column
+        and item.get("preco", 0) > 0
+    }
+    return prices.pop() if len(prices) == 1 else 0
+
+
+def unique_price_for_product(items: list[dict], product: str, quality: str = "") -> float:
+    prices = {
+        item.get("preco", 0)
+        for item in items
+        if item["produto"] == product
+        and item.get("qualidade", "") == quality
+        and item.get("preco", 0) > 0
+    }
+    return prices.pop() if len(prices) == 1 else 0
+
+
+def unique_quality_labels(items: list[dict], product: str) -> list[str]:
+    quality_items = [
+        item
+        for item in items
+        if item.get("qualidade") and (not product or item["produto"] == product)
+    ]
+    quality_items.sort(key=lambda item: item.get("ordem_qualidade", 0))
+    labels = []
+    for item in quality_items:
+        quality = item["qualidade"]
+        if quality not in labels:
+            labels.append(quality)
+    return labels
+
+
+def fill_parent_quantities(items: list[dict]) -> None:
+    for item in items:
+        if item.get("qualidade") or item["quantidade"]:
+            continue
+
+        item["quantidade"] = sum(
+            child["quantidade"]
+            for child in items
+            if child["produto"] == item["produto"]
+            and child.get("qualidade")
+            and child["local_carregamento"] == item["local_carregamento"]
+            and child["packing"] == item["packing"]
+        )
 
 
 def cell_value(matrix: list[list], row: int, col: int):
     if row >= len(matrix) or col >= len(matrix[row]):
         return None
     return matrix[row][col]
+
+
+def cell_from_row(row: tuple, index: int):
+    if index >= len(row):
+        return None
+    return row[index]
 
 
 def cell_text(matrix: list[list], row: int, col: int) -> str:
@@ -1377,6 +1569,15 @@ def parse_number(value) -> float:
         return 0
 
 
+def price_key(culture: str, packing: str, product: str, quality: str = "") -> tuple[str, str, str, str]:
+    return (
+        normalize_text(culture),
+        normalize_text(packing),
+        normalize_text(product),
+        normalize_text(short_quality_label(quality)),
+    )
+
+
 def format_date(value) -> str:
     if isinstance(value, datetime):
         return value.strftime("%d/%m/%Y")
@@ -1389,6 +1590,19 @@ def normalize_text(value) -> str:
     text = "" if value is None else str(value).strip().lower()
     text = unicodedata.normalize("NFKD", text)
     return "".join(char for char in text if not unicodedata.combining(char))
+
+
+def quality_label(value) -> str:
+    normalized = normalize_text(value)
+    for quality in QUALITY_STANDARDS:
+        if normalized == normalize_text(quality):
+            return quality
+    return ""
+
+
+def short_quality_label(value) -> str:
+    text = "" if value is None else str(value)
+    return text.replace("Padrão ", "").replace("Padrao ", "")
 
 
 def culture_label(culture: str) -> str:
@@ -1426,23 +1640,40 @@ def format_quantity(value: float) -> str:
     return f"{value:,.0f}".replace(",", ".")
 
 
+def format_price(value: float) -> str:
+    if not value:
+        return ""
+    formatted = f"{value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"R$ {formatted}"
+
+
+def format_quantity_with_price(quantity: float, price: float) -> str:
+    quantity_text = format_quantity(quantity)
+    price_text = format_price(price)
+    if quantity_text and price_text:
+        return f"{quantity_text} ({price_text})"
+    return quantity_text
+
+
 def render_html_table(rows: list[dict]) -> str:
     if not rows:
         return ""
 
-    headers = list(rows[0].keys())
+    headers = [header for header in rows[0].keys() if not header.startswith("_")]
     header_html = "".join(
         f'<th translate="no">{escape_html(header)}</th>' for header in headers
     )
     body_html = []
 
     for row in rows:
-        row_class = ' class="total-row"' if row.get("Produto") == "TOTAL" else ""
+        row_type = row.get("_row_type", "")
+        row_class = f' class="{row_type}-row"' if row_type else ""
+        prices = row.get("_prices", {})
         cells = []
         for header in headers:
             value = row.get(header, "")
             if header != "Produto":
-                value = format_quantity(value)
+                value = format_quantity_with_price(value, prices.get(header, 0))
             cells.append(f'<td translate="no">{escape_html(value)}</td>')
         body_html.append(f"<tr{row_class}>{''.join(cells)}</tr>")
 
