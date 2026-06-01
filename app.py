@@ -1439,7 +1439,7 @@ def build_availability_rows(items: list[dict], products: list[str], columns: lis
 
             for quality in unique_quality_labels(items, product):
                 quality_row = {
-                    "Produto": short_quality_label(quality),
+                    "Produto": display_quality_label(quality),
                     "_row_type": "quality",
                     "_prices": {},
                 }
@@ -1603,6 +1603,15 @@ def quality_label(value) -> str:
 def short_quality_label(value) -> str:
     text = "" if value is None else str(value)
     return text.replace("Padrão ", "").replace("Padrao ", "")
+
+
+def display_quality_label(value) -> str:
+    text = "" if value is None else str(value).strip()
+    if normalize_text(text) == "a":
+        return "Padrão A"
+    if normalize_text(text) == "b":
+        return "Padrão B"
+    return text
 
 
 def culture_label(culture: str) -> str:
