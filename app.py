@@ -1,4 +1,6 @@
 import base64
+import subprocess
+import tempfile
 import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
@@ -29,6 +31,10 @@ AUTO_REFRESH_SECONDS = 600
 BRASILIA_TZ = pytz.timezone("America/Sao_Paulo")
 QUALITY_STANDARDS = ("Padrão A", "Padrão B")
 PRICE_SHEET_NAME = "Precos"
+GIT_SPREADSHEET_PATH = EXCEL_PATH.name
+GIT_SYNC_LOCK_PATH = Path(tempfile.gettempdir()) / "trebeschi_disponibilidade_git_sync.lock"
+GIT_SYNC_LOCK_MAX_AGE_SECONDS = 300
+GIT_COMMIT_MESSAGE = "Atualiza planilha de disponibilidade"
 
 CULTURE_ICONS = {
     "Tomate": "🍅",
@@ -271,6 +277,104 @@ class ExcelAvailabilityRepository:
 
         fill_parent_quantities(items)
         return items
+
+
+# ============================================================================
+# Sincronizacao Git da planilha
+# ============================================================================
+
+class SpreadsheetGitSync:
+    """Commita e envia ao Git somente alteracoes da planilha disponibilidade.xlsx."""
+
+    def __init__(self, repo_dir: Path, spreadsheet_path: Path) -> None:
+        self.repo_dir = repo_dir
+        self.spreadsheet_path = spreadsheet_path
+        self.relative_path = GIT_SPREADSHEET_PATH
+
+    def sync_if_spreadsheet_changed(self) -> str:
+        """Verifica mudanca na planilha e, quando existir, faz commit e push somente dela."""
+        if not (self.repo_dir / ".git").exists() or not self.spreadsheet_path.exists():
+            return ""
+
+        if not self._acquire_lock():
+            return "Sincronizacao Git da planilha ja esta em andamento."
+
+        try:
+            # A verificacao e limitada a disponibilidade.xlsx para impedir commit de codigo.
+            status = self._git("status", "--porcelain", "--", self.relative_path)
+            if not status.stdout.strip():
+                return ""
+
+            # Se ja existir outro arquivo staged, a automacao para para nao commitar codigo.
+            staged_files = self._staged_files()
+            if any(path != self.relative_path for path in staged_files):
+                return "Sincronizacao Git pausada: ha outros arquivos preparados para commit."
+
+            # O git add tambem recebe somente a planilha; outras mudancas ficam fora do commit.
+            self._git("add", "--", self.relative_path)
+            timestamp = datetime.now(BRASILIA_TZ).strftime("%d/%m/%Y %H:%M")
+            commit = self._git(
+                "commit",
+                "-m",
+                f"{GIT_COMMIT_MESSAGE} - {timestamp}",
+                check=False,
+            )
+            if commit.returncode != 0:
+                output = (commit.stderr or commit.stdout).strip()
+                if "nothing to commit" in output.lower():
+                    return ""
+                return f"Falha ao commitar a planilha: {output}"
+
+            push = self._git("push", "origin", self._current_branch(), check=False)
+            if push.returncode != 0:
+                output = (push.stderr or push.stdout).strip()
+                return f"Commit da planilha criado, mas o push falhou: {output}"
+
+            return "Planilha sincronizada automaticamente no Git."
+        finally:
+            self._release_lock()
+
+    def _current_branch(self) -> str:
+        branch = self._git("branch", "--show-current")
+        return branch.stdout.strip() or "main"
+
+    def _staged_files(self) -> list[str]:
+        staged = self._git("diff", "--cached", "--name-only")
+        return [line.strip() for line in staged.stdout.splitlines() if line.strip()]
+
+    def _git(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+        # subprocess com lista de argumentos evita comandos compostos e limita a execucao ao Git.
+        result = subprocess.run(
+            ["git", "-C", str(self.repo_dir), *args],
+            capture_output=True,
+            text=True,
+            timeout=45,
+            check=False,
+        )
+        if check and result.returncode != 0:
+            output = (result.stderr or result.stdout).strip()
+            raise RuntimeError(output)
+        return result
+
+    def _acquire_lock(self) -> bool:
+        # A trava evita que dois refreshes/sessoes tentem criar commit ao mesmo tempo.
+        if GIT_SYNC_LOCK_PATH.exists():
+            lock_age = datetime.now().timestamp() - GIT_SYNC_LOCK_PATH.stat().st_mtime
+            if lock_age < GIT_SYNC_LOCK_MAX_AGE_SECONDS:
+                return False
+
+        GIT_SYNC_LOCK_PATH.write_text(
+            datetime.now(BRASILIA_TZ).isoformat(),
+            encoding="utf-8",
+        )
+        return True
+
+    @staticmethod
+    def _release_lock() -> None:
+        try:
+            GIT_SYNC_LOCK_PATH.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 # ============================================================================
@@ -973,6 +1077,19 @@ class TrebeschiCommercialApp:
             "| Atualizacao automatica a cada 10 minutos"
         )
         st.caption(f"Arquivo lido: {EXCEL_PATH}")
+        self.render_spreadsheet_git_sync_status()
+
+    @staticmethod
+    def render_spreadsheet_git_sync_status() -> None:
+        """Executa a automacao Git da planilha e exibe um retorno discreto para manutencao."""
+        try:
+            message = SpreadsheetGitSync(BASE_DIR, EXCEL_PATH).sync_if_spreadsheet_changed()
+        except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+            st.warning(f"Sincronizacao Git da planilha nao concluida: {error}")
+            return
+
+        if message:
+            st.caption(message)
 
     @staticmethod
     def enable_auto_refresh() -> None:
