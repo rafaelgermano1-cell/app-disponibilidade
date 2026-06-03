@@ -999,6 +999,9 @@ class TrebeschiCommercialApp:
         PageStyle.apply()
         self.disable_browser_translation()
         self.render_header()
+        # O refresh global garante que a verificacao Git rode mesmo fora da tela de disponibilidade.
+        self.enable_auto_refresh()
+        self.render_spreadsheet_git_sync_status()
         selected_page = self.render_feature_selector()
 
         if selected_page == "Disponibilidade":
@@ -1059,7 +1062,6 @@ class TrebeschiCommercialApp:
             "Consulta de produtos disponiveis por local de carregamento."
         )
         self.render_update_status()
-        self.enable_auto_refresh()
         self.render_consultation(self.repository.list_items())
 
     def render_quote_page(self) -> None:
@@ -1077,7 +1079,6 @@ class TrebeschiCommercialApp:
             "| Atualizacao automatica a cada 10 minutos"
         )
         st.caption(f"Arquivo lido: {EXCEL_PATH}")
-        self.render_spreadsheet_git_sync_status()
 
     @staticmethod
     def render_spreadsheet_git_sync_status() -> None:
@@ -1089,7 +1090,14 @@ class TrebeschiCommercialApp:
             return
 
         if message:
-            st.caption(message)
+            # Sucesso fica visivel; pausas/falhas viram aviso para facilitar manutencao.
+            normalized = normalize_text(message)
+            if "falh" in normalized or "pausad" in normalized:
+                st.warning(message)
+            elif "sincronizada" in normalized:
+                st.success(message)
+            else:
+                st.caption(message)
 
     @staticmethod
     def enable_auto_refresh() -> None:
