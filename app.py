@@ -37,7 +37,7 @@ GIT_SYNC_LOCK_MAX_AGE_SECONDS = 300
 GIT_COMMIT_MESSAGE = "Atualiza planilha de disponibilidade"
 
 CULTURE_ICONS = {
-    "Tomate": "🍅",
+    "Tomate": "🍅
     "Cebola": "🧅",
     "Batata Doce": "🍠",
     "Alho": "🧄",
