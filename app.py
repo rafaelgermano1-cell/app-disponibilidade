@@ -1,6 +1,8 @@
 import base64
 import subprocess
 import tempfile
+import threading
+import time as time_module
 import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
@@ -33,7 +35,9 @@ QUALITY_STANDARDS = ("Padrão A", "Padrão B")
 PRICE_SHEET_NAME = "Precos"
 GIT_SPREADSHEET_PATH = EXCEL_PATH.name
 GIT_SYNC_LOCK_PATH = Path(tempfile.gettempdir()) / "trebeschi_disponibilidade_git_sync.lock"
+GIT_SYNC_STATUS_PATH = Path(tempfile.gettempdir()) / "trebeschi_disponibilidade_git_sync_status.txt"
 GIT_SYNC_LOCK_MAX_AGE_SECONDS = 300
+GIT_SYNC_POLL_SECONDS = 60
 GIT_COMMIT_MESSAGE = "Atualiza planilha de disponibilidade"
 
 CULTURE_ICONS = {
@@ -312,6 +316,12 @@ class SpreadsheetGitSync:
 
             # O git add tambem recebe somente a planilha; outras mudancas ficam fora do commit.
             self._git("add", "--", self.relative_path)
+            staged_files = self._staged_files()
+            if staged_files != [self.relative_path]:
+                # Esta validacao final garante que a automacao nunca commite codigo por engano.
+                self._git("restore", "--staged", "--", self.relative_path, check=False)
+                return "Sincronizacao Git pausada: staged diferente de disponibilidade.xlsx."
+
             timestamp = datetime.now(BRASILIA_TZ).strftime("%d/%m/%Y %H:%M")
             commit = self._git(
                 "commit",
@@ -325,7 +335,7 @@ class SpreadsheetGitSync:
                     return ""
                 return f"Falha ao commitar a planilha: {output}"
 
-            push = self._git("push", "origin", self._current_branch(), check=False)
+            push = self._git("push", "origin", self._current_branch(), check=False, timeout=120)
             if push.returncode != 0:
                 output = (push.stderr or push.stdout).strip()
                 return f"Commit da planilha criado, mas o push falhou: {output}"
@@ -342,13 +352,13 @@ class SpreadsheetGitSync:
         staged = self._git("diff", "--cached", "--name-only")
         return [line.strip() for line in staged.stdout.splitlines() if line.strip()]
 
-    def _git(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+    def _git(self, *args: str, check: bool = True, timeout: int = 45) -> subprocess.CompletedProcess:
         # subprocess com lista de argumentos evita comandos compostos e limita a execucao ao Git.
         result = subprocess.run(
             ["git", "-C", str(self.repo_dir), *args],
             capture_output=True,
             text=True,
-            timeout=45,
+            timeout=timeout,
             check=False,
         )
         if check and result.returncode != 0:
@@ -375,6 +385,68 @@ class SpreadsheetGitSync:
             GIT_SYNC_LOCK_PATH.unlink(missing_ok=True)
         except OSError:
             pass
+
+
+class SpreadsheetGitWatcher:
+    """Monitora a planilha em segundo plano enquanto o Streamlit estiver aberto."""
+
+    THREAD_NAME = "trebeschi-spreadsheet-git-watcher"
+
+    def __init__(self, repo_dir: Path, spreadsheet_path: Path, interval_seconds: int) -> None:
+        self.repo_dir = repo_dir
+        self.spreadsheet_path = spreadsheet_path
+        self.interval_seconds = interval_seconds
+
+    def start(self) -> None:
+        """Inicia uma unica thread de monitoramento por processo do Streamlit."""
+        if self._already_running():
+            return
+
+        thread = threading.Thread(
+            target=self._watch_loop,
+            name=self.THREAD_NAME,
+            daemon=True,
+        )
+        thread.start()
+
+    def _watch_loop(self) -> None:
+        # A primeira verificacao acontece imediatamente; depois repete em intervalo fixo.
+        while True:
+            self._sync_once()
+            time_module.sleep(self.interval_seconds)
+
+    def _sync_once(self) -> None:
+        try:
+            message = SpreadsheetGitSync(
+                self.repo_dir,
+                self.spreadsheet_path,
+            ).sync_if_spreadsheet_changed()
+            if message:
+                self._save_status(message)
+        except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+            self._save_status(f"Sincronizacao Git da planilha nao concluida: {error}")
+
+    @classmethod
+    def _already_running(cls) -> bool:
+        return any(thread.name == cls.THREAD_NAME and thread.is_alive() for thread in threading.enumerate())
+
+    @staticmethod
+    def _save_status(message: str) -> None:
+        # O status em arquivo temporario permite mostrar a ultima acao sem bloquear o app.
+        timestamp = datetime.now(BRASILIA_TZ).strftime("%d/%m/%Y %H:%M:%S")
+        GIT_SYNC_STATUS_PATH.write_text(
+            f"{timestamp} - {message}",
+            encoding="utf-8",
+        )
+
+
+def start_spreadsheet_git_watcher() -> None:
+    """Liga o monitor automatico sem usar cache do Streamlit antes da pagina carregar."""
+    SpreadsheetGitWatcher(
+        repo_dir=BASE_DIR,
+        spreadsheet_path=EXCEL_PATH,
+        interval_seconds=GIT_SYNC_POLL_SECONDS,
+    ).start()
 
 
 # ============================================================================
@@ -1001,6 +1073,7 @@ class TrebeschiCommercialApp:
         self.render_header()
         # O refresh global garante que a verificacao Git rode mesmo fora da tela de disponibilidade.
         self.enable_auto_refresh()
+        start_spreadsheet_git_watcher()
         self.render_spreadsheet_git_sync_status()
         selected_page = self.render_feature_selector()
 
@@ -1082,22 +1155,26 @@ class TrebeschiCommercialApp:
 
     @staticmethod
     def render_spreadsheet_git_sync_status() -> None:
-        """Executa a automacao Git da planilha e exibe um retorno discreto para manutencao."""
-        try:
-            message = SpreadsheetGitSync(BASE_DIR, EXCEL_PATH).sync_if_spreadsheet_changed()
-        except (RuntimeError, OSError, subprocess.SubprocessError) as error:
-            st.warning(f"Sincronizacao Git da planilha nao concluida: {error}")
+        """Mostra a ultima acao do monitor Git sem bloquear a inicializacao do app."""
+        if not GIT_SYNC_STATUS_PATH.exists():
             return
 
-        if message:
-            # Sucesso fica visivel; pausas/falhas viram aviso para facilitar manutencao.
-            normalized = normalize_text(message)
-            if "falh" in normalized or "pausad" in normalized:
-                st.warning(message)
-            elif "sincronizada" in normalized:
-                st.success(message)
-            else:
-                st.caption(message)
+        try:
+            message = GIT_SYNC_STATUS_PATH.read_text(encoding="utf-8").strip()
+        except OSError:
+            return
+
+        if not message:
+            return
+
+        # Sucesso fica visivel; pausas/falhas viram aviso para facilitar manutencao.
+        normalized = normalize_text(message)
+        if "falh" in normalized or "pausad" in normalized:
+            st.warning(message)
+        elif "sincronizada" in normalized:
+            st.success(message)
+        else:
+            st.caption(message)
 
     @staticmethod
     def enable_auto_refresh() -> None:
