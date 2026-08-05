@@ -1104,11 +1104,19 @@ class TrebeschiCommercialApp:
         components.html(
             f"""
             <script>
-                window.parent.document.documentElement.setAttribute("lang", "pt-BR");
-                window.parent.document.body.setAttribute("translate", "no");
-                setTimeout(function() {{
-                    window.parent.location.reload();
-                }}, {AUTO_REFRESH_SECONDS * 1000});
+                const doc = window.parent.document;
+
+                doc.documentElement.setAttribute("lang", "pt-BR");
+                doc.documentElement.setAttribute("translate", "no");
+                doc.body.setAttribute("translate", "no");
+
+                if (!window.parent.__trebeschiAutoRefresh__) {{
+                    window.parent.__trebeschiAutoRefresh__ = true;
+
+                    setTimeout(() => {{
+                        window.parent.location.reload();
+                    }}, {AUTO_REFRESH_SECONDS * 1000});
+                }}
             </script>
             """,
             height=0,
