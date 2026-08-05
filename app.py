@@ -1,8 +1,7 @@
 import base64
+import os
 import subprocess
 import tempfile
-import threading
-import time as time_module
 import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
@@ -13,10 +12,9 @@ from zipfile import BadZipFile
 
 import pytz
 import streamlit as st
-import streamlit.components.v1 as components
+from streamlit.components.v1 import html as components_html
 from openpyxl import load_workbook
 from PIL import Image as PILImage
-
 
 # ============================================================================
 # Configuracoes principais
@@ -35,10 +33,10 @@ QUALITY_STANDARDS = ("Padrão A", "Padrão B")
 PRICE_SHEET_NAME = "Precos"
 GIT_SPREADSHEET_PATH = EXCEL_PATH.name
 GIT_SYNC_LOCK_PATH = Path(tempfile.gettempdir()) / "trebeschi_disponibilidade_git_sync.lock"
-GIT_SYNC_STATUS_PATH = Path(tempfile.gettempdir()) / "trebeschi_disponibilidade_git_sync_status.txt"
 GIT_SYNC_LOCK_MAX_AGE_SECONDS = 300
-GIT_SYNC_POLL_SECONDS = 60
 GIT_COMMIT_MESSAGE = "Atualiza planilha de disponibilidade"
+AUTO_REFRESH_SESSION_KEY = "trebeschi_auto_refresh_initialized"
+TRANSLATION_SESSION_KEY = "trebeschi_translation_disabled"
 
 CULTURE_ICONS = {
     "Tomate": "🍅",
@@ -127,6 +125,10 @@ class AppCatalog:
 # Leitura da disponibilidade
 # ============================================================================
 
+class ExcelLoadError(Exception):
+    pass
+
+
 class ExcelAvailabilityRepository:
     """Le a planilha disponibilidade.xlsx no formato de blocos por cultura/packing."""
 
@@ -139,13 +141,25 @@ class ExcelAvailabilityRepository:
             st.warning(f"Planilha nao encontrada: {self.excel_path}")
             return []
 
+        stats = self.excel_path.stat()
+        try:
+            return load_availability_items(
+                excel_path=str(self.excel_path),
+                culture_names=tuple(self.culture_names),
+                mtime=stats.st_mtime,
+                size=stats.st_size,
+            )
+        except ExcelLoadError as error:
+            st.warning(str(error))
+            return []
+
+    def _load_items(self) -> list[dict]:
         try:
             workbook = load_workbook(self.excel_path, data_only=True, read_only=True)
-        except (PermissionError, OSError, BadZipFile):
-            st.warning(
+        except (PermissionError, OSError, BadZipFile) as exc:
+            raise ExcelLoadError(
                 "A planilha esta sendo salva pelo Excel. Aguarde a proxima atualizacao automatica."
-            )
-            return []
+            ) from exc
 
         try:
             items = []
@@ -218,13 +232,13 @@ class ExcelAvailabilityRepository:
         return items
 
     def _read_block(
-        self,
-        matrix: list[list],
-        culture: str,
-        prices: dict[tuple[str, str, str, str], float],
-        start_row: int,
-        start_col: int,
-        first_id: int,
+            self,
+            matrix: list[list],
+            culture: str,
+            prices: dict[tuple[str, str, str, str], float],
+            start_row: int,
+            start_col: int,
+            first_id: int,
     ) -> list[dict]:
         location = cell_text(matrix, start_row + 3, start_col)
         packing = cell_text(matrix, start_row + 3, start_col + 2)
@@ -283,6 +297,17 @@ class ExcelAvailabilityRepository:
         return items
 
 
+@st.cache_data(show_spinner=False)
+def load_availability_items(
+        excel_path: str,
+        culture_names: tuple[str, ...],
+        mtime: float,
+        size: int,
+) -> list[dict]:
+    repository = ExcelAvailabilityRepository(Path(excel_path), list(culture_names))
+    return repository._load_items()
+
+
 # ============================================================================
 # Sincronizacao Git da planilha
 # ============================================================================
@@ -316,12 +341,6 @@ class SpreadsheetGitSync:
 
             # O git add tambem recebe somente a planilha; outras mudancas ficam fora do commit.
             self._git("add", "--", self.relative_path)
-            staged_files = self._staged_files()
-            if staged_files != [self.relative_path]:
-                # Esta validacao final garante que a automacao nunca commite codigo por engano.
-                self._git("restore", "--staged", "--", self.relative_path, check=False)
-                return "Sincronizacao Git pausada: staged diferente de disponibilidade.xlsx."
-
             timestamp = datetime.now(BRASILIA_TZ).strftime("%d/%m/%Y %H:%M")
             commit = self._git(
                 "commit",
@@ -335,7 +354,7 @@ class SpreadsheetGitSync:
                     return ""
                 return f"Falha ao commitar a planilha: {output}"
 
-            push = self._git("push", "origin", self._current_branch(), check=False, timeout=120)
+            push = self._git("push", "origin", self._current_branch(), check=False)
             if push.returncode != 0:
                 output = (push.stderr or push.stdout).strip()
                 return f"Commit da planilha criado, mas o push falhou: {output}"
@@ -352,13 +371,13 @@ class SpreadsheetGitSync:
         staged = self._git("diff", "--cached", "--name-only")
         return [line.strip() for line in staged.stdout.splitlines() if line.strip()]
 
-    def _git(self, *args: str, check: bool = True, timeout: int = 45) -> subprocess.CompletedProcess:
+    def _git(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
         # subprocess com lista de argumentos evita comandos compostos e limita a execucao ao Git.
         result = subprocess.run(
             ["git", "-C", str(self.repo_dir), *args],
             capture_output=True,
             text=True,
-            timeout=timeout,
+            timeout=45,
             check=False,
         )
         if check and result.returncode != 0:
@@ -368,16 +387,24 @@ class SpreadsheetGitSync:
 
     def _acquire_lock(self) -> bool:
         # A trava evita que dois refreshes/sessoes tentem criar commit ao mesmo tempo.
+        current_time = datetime.now(BRASILIA_TZ)
         if GIT_SYNC_LOCK_PATH.exists():
-            lock_age = datetime.now().timestamp() - GIT_SYNC_LOCK_PATH.stat().st_mtime
+            lock_age = current_time.timestamp() - GIT_SYNC_LOCK_PATH.stat().st_mtime
             if lock_age < GIT_SYNC_LOCK_MAX_AGE_SECONDS:
                 return False
+            try:
+                GIT_SYNC_LOCK_PATH.unlink()
+            except OSError:
+                return False
 
-        GIT_SYNC_LOCK_PATH.write_text(
-            datetime.now(BRASILIA_TZ).isoformat(),
-            encoding="utf-8",
-        )
-        return True
+        try:
+            with GIT_SYNC_LOCK_PATH.open("x", encoding="utf-8") as lock_file:
+                lock_file.write(current_time.isoformat())
+            return True
+        except FileExistsError:
+            return False
+        except OSError:
+            return False
 
     @staticmethod
     def _release_lock() -> None:
@@ -385,68 +412,6 @@ class SpreadsheetGitSync:
             GIT_SYNC_LOCK_PATH.unlink(missing_ok=True)
         except OSError:
             pass
-
-
-class SpreadsheetGitWatcher:
-    """Monitora a planilha em segundo plano enquanto o Streamlit estiver aberto."""
-
-    THREAD_NAME = "trebeschi-spreadsheet-git-watcher"
-
-    def __init__(self, repo_dir: Path, spreadsheet_path: Path, interval_seconds: int) -> None:
-        self.repo_dir = repo_dir
-        self.spreadsheet_path = spreadsheet_path
-        self.interval_seconds = interval_seconds
-
-    def start(self) -> None:
-        """Inicia uma unica thread de monitoramento por processo do Streamlit."""
-        if self._already_running():
-            return
-
-        thread = threading.Thread(
-            target=self._watch_loop,
-            name=self.THREAD_NAME,
-            daemon=True,
-        )
-        thread.start()
-
-    def _watch_loop(self) -> None:
-        # A primeira verificacao acontece imediatamente; depois repete em intervalo fixo.
-        while True:
-            self._sync_once()
-            time_module.sleep(self.interval_seconds)
-
-    def _sync_once(self) -> None:
-        try:
-            message = SpreadsheetGitSync(
-                self.repo_dir,
-                self.spreadsheet_path,
-            ).sync_if_spreadsheet_changed()
-            if message:
-                self._save_status(message)
-        except (RuntimeError, OSError, subprocess.SubprocessError) as error:
-            self._save_status(f"Sincronizacao Git da planilha nao concluida: {error}")
-
-    @classmethod
-    def _already_running(cls) -> bool:
-        return any(thread.name == cls.THREAD_NAME and thread.is_alive() for thread in threading.enumerate())
-
-    @staticmethod
-    def _save_status(message: str) -> None:
-        # O status em arquivo temporario permite mostrar a ultima acao sem bloquear o app.
-        timestamp = datetime.now(BRASILIA_TZ).strftime("%d/%m/%Y %H:%M:%S")
-        GIT_SYNC_STATUS_PATH.write_text(
-            f"{timestamp} - {message}",
-            encoding="utf-8",
-        )
-
-
-def start_spreadsheet_git_watcher() -> None:
-    """Liga o monitor automatico sem usar cache do Streamlit antes da pagina carregar."""
-    SpreadsheetGitWatcher(
-        repo_dir=BASE_DIR,
-        spreadsheet_path=EXCEL_PATH,
-        interval_seconds=GIT_SYNC_POLL_SECONDS,
-    ).start()
 
 
 # ============================================================================
@@ -614,30 +579,30 @@ class PageStyle:
                 /* =========================================
                    SELECTBOX / DROPDOWN - DARK MODE REAL FIX
                     ========================================= */
-                    
+
                     /* Caixa principal fechada */
-                    
+
                     div[data-baseweb="select"] > div {
                         background: var(--input-bg) !important;
                         color: var(--input-text) !important;
                         border: 1px solid var(--input-border) !important;
                     }
-                    
+
                     /* Texto dentro do select */
-                    
+
                     div[data-baseweb="select"] span {
                         color: var(--input-text) !important;
                     }
-                    
+
                     /* Ícone da seta */
-                    
+
                     div[data-baseweb="select"] svg {
                     fill: var(--input-text) !important;
                     color: var(--input-text) !important;
                 }
-                    
+
                     /* Popup inteiro do dropdown */
-                    
+
                     div[data-baseweb="popover"] {
                         background-color: var(--surface) !important;
                     }
@@ -647,41 +612,41 @@ class PageStyle:
                     }
 
                     /* Container da lista */
-                    
+
                     ul[role="listbox"] {
                         background: var(--surface) !important;
                         border: 1px solid var(--border) !important;
                         border-radius: 10px !important;
                         padding: 4px !important;
                     }
-                    
+
                     /* Cada opção */
-                    
+
                     li[role="option"] {
                         background: var(--surface) !important;
                         color: var(--text) !important;
                         border-radius: 8px !important;
                     }
-                    
+
                     /* Texto da opção */
-                    
+
                     li[role="option"] * {
                         color: var(--text) !important;
                     }
-                    
+
                     /* Hover */
-                    
+
                     li[role="option"]:hover {
                         background: var(--surface-soft) !important;
                         color: var(--text) !important;
                     }
-                    
+
                     /* Selecionado */
-                    
+
                     li[aria-selected="true"] {
                         background: var(--green) !important;
                     }
-                    
+
                     li[aria-selected="true"] * {
                         color: white !important;
                     }
@@ -691,76 +656,76 @@ class PageStyle:
                 ========================================= */
 
                 /* Texto */
-                
+
                 .stCheckbox label,
                 .stCheckbox span {
                     color: var(--text) !important;
                     font-weight: 600;
                 }
-                
+
                 /* Caixa externa */
-                
+
                 .stCheckbox div[role="checkbox"] {
-                
+
                     background-color: var(--input-bg) !important;
-                
+
                     border: 2px solid var(--input-border) !important;
-                
+
                     border-radius: 6px !important;
-                
+
                     width: 20px !important;
-                
+
                     height: 20px !important;
-                
+
                     transition: all 0.15s ease;
                 }
-                
+
                 /* Hover */
-                
+
                 .stCheckbox div[role="checkbox"]:hover {
-                
+
                     border-color: var(--green-bright) !important;
-                
+
                     box-shadow: 0 0 0 1px var(--green-bright) !important;
                 }
-                
+
                 /* Marcado */
-                
+
                 .stCheckbox div[role="checkbox"][aria-checked="true"] {
-                
+
                     background-color: var(--green) !important;
-                
+
                     border-color: var(--green) !important;
                 }
-                
+
                 /* Ícone do check */
-                
+
                 .stCheckbox div[role="checkbox"] svg {
-                
+
                     fill: white !important;
-                
+
                     stroke: white !important;
-                
+
                     stroke-width: 3 !important;
-                    
+
                     color: white !important;
-                
+
                     width: 16px !important;
-                
+
                     height: 16px !important;
                 }
-                
+
                 /* Remove fundo estranho do BaseWeb */
-                
+
                 .stCheckbox div[data-testid="stMarkdownContainer"] {
-                
+
                     color: var(--text) !important;
                 }
-                
+
                 /* Espaçamento melhor */
-                
+
                 .stCheckbox {
-                
+
                     padding-top: 0.2rem;
                     padding-bottom: 0.2rem;
                 }
@@ -1073,7 +1038,6 @@ class TrebeschiCommercialApp:
         self.render_header()
         # O refresh global garante que a verificacao Git rode mesmo fora da tela de disponibilidade.
         self.enable_auto_refresh()
-        start_spreadsheet_git_watcher()
         self.render_spreadsheet_git_sync_status()
         selected_page = self.render_feature_selector()
 
@@ -1087,13 +1051,26 @@ class TrebeschiCommercialApp:
     @staticmethod
     def disable_browser_translation() -> None:
         """Marca a pagina como pt-BR para evitar traducoes automaticas incorretas."""
-        components.html(
+        components_html(
             """
             <script>
-                const doc = window.parent.document;
-                doc.documentElement.setAttribute("lang", "pt-BR");
-                doc.documentElement.setAttribute("translate", "no");
-                doc.body.setAttribute("translate", "no");
+                try {
+                    const parent = window.parent;
+                    if (!parent || parent === window) {
+                        return;
+                    }
+                    if (parent._trebeschiTranslationDisabled) {
+                        return;
+                    }
+                    parent._trebeschiTranslationDisabled = true;
+                    if (parent.document) {
+                        parent.document.documentElement.setAttribute("lang", "pt-BR");
+                        parent.document.documentElement.setAttribute("translate", "no");
+                        parent.document.body.setAttribute("translate", "no");
+                    }
+                } catch (error) {
+                    console.warn("Translation disable failed", error);
+                }
             </script>
             """,
             height=0,
@@ -1126,6 +1103,7 @@ class TrebeschiCommercialApp:
             ["Disponibilidade", "Cota\u00e7\u00e3o"],
             horizontal=True,
             label_visibility="collapsed",
+            key="feature_selector_page",
         )
         st.divider()
         return selected_page
@@ -1155,44 +1133,42 @@ class TrebeschiCommercialApp:
 
     @staticmethod
     def render_spreadsheet_git_sync_status() -> None:
-        """Mostra a ultima acao do monitor Git sem bloquear a inicializacao do app."""
-        if not GIT_SYNC_STATUS_PATH.exists():
-            return
-
+        """Executa a automacao Git da planilha e exibe um retorno discreto para manutencao."""
         try:
-            message = GIT_SYNC_STATUS_PATH.read_text(encoding="utf-8").strip()
-        except OSError:
+            message = SpreadsheetGitSync(BASE_DIR, EXCEL_PATH).sync_if_spreadsheet_changed()
+        except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+            st.warning(f"Sincronizacao Git da planilha nao concluida: {error}")
             return
 
-        if not message:
-            return
-
-        # Sucesso fica visivel; pausas/falhas viram aviso para facilitar manutencao.
-        normalized = normalize_text(message)
-        if "falh" in normalized or "pausad" in normalized:
-            st.warning(message)
-        elif "sincronizada" in normalized:
-            st.success(message)
-        else:
-            st.caption(message)
+        if message:
+            # Sucesso fica visivel; pausas/falhas viram aviso para facilitar manutencao.
+            normalized = normalize_text(message)
+            if "falh" in normalized or "pausad" in normalized:
+                st.warning(message)
+            elif "sincronizada" in normalized:
+                st.success(message)
+            else:
+                st.caption(message)
 
     @staticmethod
     def enable_auto_refresh() -> None:
-        components.html(
+        components_html(
             f"""
             <script>
-                const doc = window.parent.document;
-
-                doc.documentElement.setAttribute("lang", "pt-BR");
-                doc.documentElement.setAttribute("translate", "no");
-                doc.body.setAttribute("translate", "no");
-
-                if (!window.parent.__trebeschiAutoRefresh__) {{
-                    window.parent.__trebeschiAutoRefresh__ = true;
-
-                    setTimeout(() => {{
-                        window.parent.location.reload();
+                try {{
+                    const parent = window.parent;
+                    if (!parent || parent === window) {{
+                        return;
+                    }}
+                    if (parent._trebeschiAutoRefreshInstalled) {{
+                        return;
+                    }}
+                    parent._trebeschiAutoRefreshInstalled = true;
+                    setTimeout(function() {{
+                        parent.location.reload();
                     }}, {AUTO_REFRESH_SECONDS * 1000});
+                }} catch (error) {{
+                    console.warn("Auto refresh failed", error);
                 }}
             </script>
             """,
@@ -1210,16 +1186,19 @@ class TrebeschiCommercialApp:
             "Local de carregamento",
             self.catalog.location_names(),
             index=0,
+            key="location_filter",
         )
         available_cultures = self.catalog.cultures_for_location(selected_location, items)
         selected_culture_label = st.selectbox(
             "Cultura",
             ["Todas"] + [culture_label(culture) for culture in available_cultures],
+            key="culture_filter",
         )
         selected_culture = culture_from_label(selected_culture_label)
         search = st.text_input(
             "Buscar produto ou packing",
             placeholder="Ex: AA Misto, Classe 5, LV",
+            key="search_filter",
         )
 
         filtered = self.filter_items(items, selected_location, selected_culture, search)
@@ -1242,11 +1221,11 @@ class TrebeschiCommercialApp:
                 self.render_culture_table(culture, culture_items)
 
     def filter_items(
-        self,
-        items: list[dict],
-        location: str,
-        culture: str,
-        search: str,
+            self,
+            items: list[dict],
+            location: str,
+            culture: str,
+            search: str,
     ) -> list[dict]:
         filtered = list(items)
 
@@ -1267,8 +1246,8 @@ class TrebeschiCommercialApp:
                 item
                 for item in filtered
                 if term in normalize_text(item["produto"])
-                or term in normalize_text(item["packing"])
-                or term in normalize_text(item["local_carregamento"])
+                   or term in normalize_text(item["packing"])
+                   or term in normalize_text(item["local_carregamento"])
             ]
 
         return filtered
@@ -1312,6 +1291,21 @@ class TrebeschiCommercialApp:
                 'alt="Trebeschi">'
             )
 
+        st.markdown(
+            f"""
+            <div class="app-header">
+                {logo_html}
+                <div class="app-title">{APP_TITLE} - Cotação</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<h4 class="feature-title">Cotação comercial</h4>',
+            unsafe_allow_html=True,
+        )
+        st.divider()
+
     def render_quote_simulator(self) -> None:
         st.markdown(
             '<div class="quote-section-title">🧺 Selecione as culturas para cotação:</div>',
@@ -1346,19 +1340,51 @@ class TrebeschiCommercialApp:
         with st.form("quote_form"):
             costs = {}
             if selected_cultures["Tomate"]:
-                costs["Tomate"] = st.number_input("Custo Tomate (R$)", min_value=0.0, step=0.01)
+                costs["Tomate"] = st.number_input(
+                    "Custo Tomate (R$)",
+                    min_value=0.0,
+                    step=0.01,
+                    key="quote_cost_tomate",
+                )
             if selected_cultures["Alho"]:
-                costs["Alho"] = st.number_input("Custo Alho (R$)", min_value=0.0, step=0.01)
+                costs["Alho"] = st.number_input(
+                    "Custo Alho (R$)",
+                    min_value=0.0,
+                    step=0.01,
+                    key="quote_cost_alho",
+                )
             if selected_cultures["Cebola"]:
-                costs["Cebola"] = st.number_input("Custo Cebola (R$)", min_value=0.0, step=0.01)
+                costs["Cebola"] = st.number_input(
+                    "Custo Cebola (R$)",
+                    min_value=0.0,
+                    step=0.01,
+                    key="quote_cost_cebola",
+                )
             if selected_cultures["Batata Doce"]:
-                costs["Batata Doce"] = st.number_input("Custo Batata Doce (R$)", min_value=0.0, step=0.01)
+                costs["Batata Doce"] = st.number_input(
+                    "Custo Batata Doce (R$)",
+                    min_value=0.0,
+                    step=0.01,
+                    key="quote_cost_batata_doce",
+                )
 
             discount = st.number_input(
-                "Desconto contratual / comissão (%)", min_value=0.0, step=0.01
+                "Desconto contratual / comissão (%)",
+                min_value=0.0,
+                step=0.01,
+                key="quote_discount",
             )
-            logistics = st.number_input("Operação logística (R$)", min_value=0.0, step=0.01)
-            tax_name = st.selectbox("Tipo de imposto", list(TAXES.keys()))
+            logistics = st.number_input(
+                "Operação logística (R$)",
+                min_value=0.0,
+                step=0.01,
+                key="quote_logistics",
+            )
+            tax_name = st.selectbox(
+                "Tipo de imposto",
+                list(TAXES.keys()),
+                key="quote_tax_type",
+            )
 
             tomato_package = None
             tomato_weight = None
@@ -1367,10 +1393,12 @@ class TrebeschiCommercialApp:
                 tomato_package = st.selectbox(
                     "Tipo de embalagem - Tomate",
                     ["Papelão", "HB", "IFCO", "Plástica"],
+                    key="quote_tomato_package",
                 )
                 tomato_weight = st.selectbox(
                     "Peso por caixa - Tomate (kg)",
                     [18, 19, 20, 22, 23],
+                    key="quote_tomato_weight",
                 )
                 st.caption("Custo de mão de obra fixo: R$ 7,00")
 
@@ -1381,6 +1409,7 @@ class TrebeschiCommercialApp:
                 potato_package = st.selectbox(
                     "Tipo de embalagem - Batata Doce",
                     ["Papelão", "IFCO", "HB", "SC"],
+                    key="quote_potato_package",
                 )
                 if potato_package == "SC":
                     potato_weight = 20
@@ -1388,14 +1417,20 @@ class TrebeschiCommercialApp:
                 else:
                     potato_weight = st.selectbox(
                         "Peso por caixa - Batata Doce (kg)",
-                        [18, 20, 22,],
+                        [18, 20, 22],
+                        key="quote_potato_weight",
                     )
 
             validity_input = st.text_input(
                 "Validade da cotação (hora e minuto, ex: 1430)",
                 placeholder="ex: 1430",
+                key="quote_validity",
             )
-            submitted = st.form_submit_button("Calcular cotação", type="primary")
+            submitted = st.form_submit_button(
+                "Calcular cotação",
+                type="primary",
+                key="quote_submit",
+            )
 
         if not submitted:
             st.info("Preencha os dados e clique em Calcular cotação.")
@@ -1473,16 +1508,16 @@ class TrebeschiCommercialApp:
 # ============================================================================
 
 def calculate_quotes(
-    selected_cultures: dict[str, bool],
-    costs: dict[str, float],
-    discount: float,
-    logistics: float,
-    tax: float,
-    tomato_package: str | None,
-    tomato_weight: int | None,
-    potato_package: str | None,
-    potato_weight: int | None,
-    validity_input: str = "",
+        selected_cultures: dict[str, bool],
+        costs: dict[str, float],
+        discount: float,
+        logistics: float,
+        tax: float,
+        tomato_package: str | None,
+        tomato_weight: int | None,
+        potato_package: str | None,
+        potato_weight: int | None,
+        validity_input: str = "",
 ) -> list[dict]:
     """Calcula as cotacoes por cultura usando as mesmas premissas do app original."""
 
@@ -1530,7 +1565,10 @@ def build_quote(culture: str, icon: str, package: str, box_value: float, kg_valu
 
 
 def calculate_price(total_cost: float, weight: float, discount: float, tax: float) -> tuple[float, float]:
-    box_value = total_cost / (1 - (discount / 100 + tax))
+    factor = 1 - ((discount or 0.0) / 100 + (tax or 0.0))
+    if factor <= 0:
+        factor = 0.01
+    box_value = total_cost / factor
     return round_up_10_cents(box_value), box_value / weight
 
 
@@ -1703,9 +1741,9 @@ def cell_price(items: list[dict], product: str, column: str, quality: str = "") 
         item.get("preco", 0)
         for item in items
         if item["produto"] == product
-        and item.get("qualidade", "") == quality
-        and quantity_column_name(item, items) == column
-        and item.get("preco", 0) > 0
+           and item.get("qualidade", "") == quality
+           and quantity_column_name(item, items) == column
+           and item.get("preco", 0) > 0
     }
     return prices.pop() if len(prices) == 1 else 0
 
@@ -1715,8 +1753,8 @@ def unique_price_for_product(items: list[dict], product: str, quality: str = "")
         item.get("preco", 0)
         for item in items
         if item["produto"] == product
-        and item.get("qualidade", "") == quality
-        and item.get("preco", 0) > 0
+           and item.get("qualidade", "") == quality
+           and item.get("preco", 0) > 0
     }
     return prices.pop() if len(prices) == 1 else 0
 
