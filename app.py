@@ -1397,7 +1397,7 @@ class TrebeschiCommercialApp:
                 )
                 tomato_weight = st.selectbox(
                     "Peso por caixa - Tomate (kg)",
-                    [18, 19, 20, 22, 23],
+                    [10,15,18, 19, 20, 22, 23],
                     key="quote_tomato_weight",
                 )
                 st.caption("Custo de mão de obra fixo: R$ 7,00")
