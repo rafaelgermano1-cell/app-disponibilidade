@@ -1055,18 +1055,18 @@ class TrebeschiCommercialApp:
             """
             <script>
                 try {
-                    const parent = window.parent;
-                    if (!parent || parent === window) {
+                    const doc = window.document;
+                    if (!doc) {
                         return;
                     }
-                    if (parent._trebeschiTranslationDisabled) {
+                    if (window._trebeschiTranslationDisabled) {
                         return;
                     }
-                    parent._trebeschiTranslationDisabled = true;
-                    if (parent.document) {
-                        parent.document.documentElement.setAttribute("lang", "pt-BR");
-                        parent.document.documentElement.setAttribute("translate", "no");
-                        parent.document.body.setAttribute("translate", "no");
+                    window._trebeschiTranslationDisabled = true;
+                    doc.documentElement.setAttribute("lang", "pt-BR");
+                    doc.documentElement.setAttribute("translate", "no");
+                    if (doc.body) {
+                        doc.body.setAttribute("translate", "no");
                     }
                 } catch (error) {
                     console.warn("Translation disable failed", error);
@@ -1156,16 +1156,12 @@ class TrebeschiCommercialApp:
             f"""
             <script>
                 try {{
-                    const parent = window.parent;
-                    if (!parent || parent === window) {{
+                    if (window._trebeschiAutoRefreshInstalled) {{
                         return;
                     }}
-                    if (parent._trebeschiAutoRefreshInstalled) {{
-                        return;
-                    }}
-                    parent._trebeschiAutoRefreshInstalled = true;
+                    window._trebeschiAutoRefreshInstalled = true;
                     setTimeout(function() {{
-                        parent.location.reload();
+                        window.location.reload();
                     }}, {AUTO_REFRESH_SECONDS * 1000});
                 }} catch (error) {{
                     console.warn("Auto refresh failed", error);
